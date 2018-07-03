@@ -1,6 +1,3 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-
 import unittest
 from unittest import TestCase
 from os import getcwd
