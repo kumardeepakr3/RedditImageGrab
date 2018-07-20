@@ -1,13 +1,15 @@
 #!/usr/bin/env python
+
 """Return list of items from a sub-reddit of reddit.com."""
 
 import sys
-import HTMLParser
-from urllib2 import urlopen, Request, HTTPError
+import html.parser
+from urllib.request import urlopen, Request
+from urllib.error import HTTPError
 from json import JSONDecoder
 
-
 def getitems(subreddit, multireddit=False, previd='', reddit_sort=None):
+
     """Return list of items from a subreddit.
 
     :param subreddit: subreddit to load the post
@@ -17,12 +19,10 @@ def getitems(subreddit, multireddit=False, previd='', reddit_sort=None):
     :returns: list -- list of post url
 
     :Example:
-
     >>> # Recent items for Python.
     >>> items = getitems('python')
     >>> for item in items:
     ...     print '\t%s - %s' % (item['title'], item['url']) # doctest: +SKIP
-
     >>> # Previous items for Python.
     >>> olditems = getitems('python', ITEMS[-1]['id'])
     >>> for item in olditems:
@@ -33,15 +33,16 @@ def getitems(subreddit, multireddit=False, previd='', reddit_sort=None):
         if '/m/' not in subreddit:
             warning = ('That doesn\'t look like a multireddit. Are you sure'
                        'you need that multireddit flag?')
-            print warning
+            print(warning)
             sys.exit(1)
         url = 'http://www.reddit.com/user/%s.json' % subreddit
+
     if not multireddit:
         if '/m/' in subreddit:
             warning = ('It looks like you are trying to fetch a multireddit. \n'
                        'Check the multireddit flag. '
                        'Call --help for more info')
-            print warning
+            print(warning)
             sys.exit(1)
         # no sorting needed
         if reddit_sort is None:
@@ -55,10 +56,9 @@ def getitems(subreddit, multireddit=False, previd='', reddit_sort=None):
         else:
             url = 'http://www.reddit.com/r/{}/{}.json'.format(subreddit, reddit_sort)
 
-    # Get items after item with 'id' of previd.
-
     hdr = {'User-Agent': 'RedditImageGrab script.'}
 
+    # Get items after item with 'id' of previd.
     # here where is query start
     # query for previd comment
     if previd:
@@ -68,8 +68,8 @@ def getitems(subreddit, multireddit=False, previd='', reddit_sort=None):
     # available extension : hour, day, week, month, year, all
     # ie tophour, topweek, topweek etc
     # ie controversialhour, controversialweek etc
-
     # check if reddit_sort is advanced sort
+
     is_advanced_sort = False
     if reddit_sort is not None:
         if reddit_sort == 'top' or reddit_sort == 'controversial':
@@ -95,7 +95,7 @@ def getitems(subreddit, multireddit=False, previd='', reddit_sort=None):
 
     try:
         req = Request(url, headers=hdr)
-        json = urlopen(req).read()
+        json = urlopen(req).read().decode('utf-8')
         data = JSONDecoder().decode(json)
         if isinstance(data, dict):
             items = [x['data'] for x in data['data']['children']]
@@ -119,7 +119,7 @@ def getitems(subreddit, multireddit=False, previd='', reddit_sort=None):
     # returns `url` values html-escaped, whereas we normally need them
     # in the way they are meant to be downloaded (i.e. urlquoted at
     # most).
-    htmlparser = HTMLParser.HTMLParser()
+    htmlparser = html.parser.HTMLParser()
     for item in items:
         if item.get('url'):
             item['url'] = htmlparser.unescape(item['url'])
