@@ -21,6 +21,8 @@ from .gfycat import gfycat
 from .reddit import getitems
 from .deviantart import process_deviant_url
 
+import threading
+
 
 _log = logging.getLogger('redditdownload')
 
@@ -251,7 +253,7 @@ def parse_args(args):
                         help='ID of the last downloaded file.')
     PARSER.add_argument('--score', metavar='s', default=0, type=int, required=False,
                         help='Minimum score of images to download.')
-    PARSER.add_argument('--num', metavar='n', default=1000, type=int, required=False,
+    PARSER.add_argument('--num', metavar='n', default=100000, type=int, required=False,
                         help='Number of images to download. Set to 0 to disable the limit')
     PARSER.add_argument('--update', default=False, action='store_true', required=False,
                         help='Run until you encounter a file already downloaded.')
@@ -294,6 +296,26 @@ def parse_reddit_argument(reddit_args):
         # print in one line but with nicer format
         return 'Downloading images from "{}" subreddit'.format(', '.join(reddit_args.split('+')))
 
+def download_threaded(sharedVariableList):
+    global lock, DOWNLOADED, ERRORS, FAILED, FILECOUNT
+    try:
+        download_from_url(sharedVariableList[0], sharedVariableList[1])
+        # Image downloaded successfully!
+        print('    Sucessfully downloaded URL [%s] as [%s].' % (sharedVariableList[0], sharedVariableList[1]))
+        lock.acquire(1)
+        DOWNLOADED += 1
+        FILECOUNT += 1
+        lock.release()
+
+    except Exception as exc:
+        print('    %s' % (exc,))
+        lock.acquire(1)
+        ERRORS += 1
+        lock.release()
+    
+lock = threading.Lock()
+TOTAL = DOWNLOADED = ERRORS = SKIPPED = FAILED = 0
+FILECOUNT = 0
 
 def main():
     ARGS = parse_args(sys.argv[1:])
@@ -301,8 +323,12 @@ def main():
     logging.basicConfig(level=logging.INFO)
     print(parse_reddit_argument(ARGS.reddit))
 
-    TOTAL = DOWNLOADED = ERRORS = SKIPPED = FAILED = 0
+    global lock
+    lock.acquire(1)
+    global TOTAL, DOWNLOADED, ERRORS, SKIPPED, FAILED, FILECOUNT
     FINISHED = False
+    lock.release()
+    threadList = []
 
     # Create the specified directory if it doesn't already exist.
     if not pathexists(ARGS.dir):
@@ -318,7 +344,6 @@ def main():
 
     LAST = ARGS.last
 
-    start_time = None
     ITEM = None
 
     sort_type = ARGS.sort_type
@@ -329,18 +354,6 @@ def main():
         ITEMS = getitems(
             ARGS.reddit, multireddit=ARGS.multireddit, previd=LAST,
             reddit_sort=sort_type)
-
-        # measure time and set the program to wait 4 second between request
-        # as per reddit api guidelines
-        end_time = time.clock()
-
-        if start_time is not None:
-            elapsed_time = end_time - start_time
-
-            if elapsed_time <= 4:  # throttling
-                time.sleep(4 - elapsed_time)
-
-        start_time = time.clock()
 
         if not ITEMS:
             # No more items to process
@@ -394,8 +407,9 @@ def main():
 
                 SKIPPED += 1
                 continue
-
+            lock.acquire(1)
             FILECOUNT = 0
+            lock.release()
             try:
                 URLS = extract_urls(ITEM['url'])
             except Exception:
@@ -418,7 +432,9 @@ def main():
                         FILEEXT = '.jpg'
 
                     # Only append numbers if more than one file
+                    lock.acquire(1)
                     FILENUM = ('_%d' % FILECOUNT if len(URLS) > 1 else '')
+                    lock.release()
 
                     # create filename based on given input from user
                     if ARGS.filename_format == 'url':
@@ -442,25 +458,30 @@ def main():
                         print(text_templ.format(URL.encode('utf-8'), FILENAME.encode('utf-8')))
 
                     # Download the image
-                    try:
-                        download_from_url(URL, FILEPATH)
-                        # Image downloaded successfully!
-                        print('    Sucessfully downloaded URL [%s] as [%s].' % (URL, FILENAME))
-                        DOWNLOADED += 1
-                        FILECOUNT += 1
+                    while(threading.active_count() > 5):
+                        time.sleep(5)
 
-                    except Exception as exc:
-                        print('    %s' % (exc,))
-                        ERRORS += 1
+                    lock.acquire(1)
+                    urlCopy = URL
+                    filepathCopy = FILEPATH
+                    t = threading.Thread(target=download_threaded, args=([urlCopy, filepathCopy, DOWNLOADED, FILECOUNT, ERRORS], ))
+                    t.start()
+                    lock.release()
+                    threadList.append(t)
 
+                    lock.acquire(1)
                     if ARGS.num and DOWNLOADED >= ARGS.num:
                         FINISHED = True
+                        lock.release()
                         break
+                    lock.release()
                 except WrongFileTypeException as ERROR:
                     print('    %s' % (ERROR,))
+                    lock.acquire(1)
                     _log_wrongtype(url=URL, target_dir=ARGS.dir,
                                    filecount=FILECOUNT, _downloaded=DOWNLOADED,
                                    filename=FILENAME)
+                    lock.release()
                     SKIPPED += 1
                 except FileExistsException as ERROR:
                     print('    %s' % (ERROR,))
@@ -486,6 +507,10 @@ def main():
                 break
 
         LAST = ITEM['id'] if ITEM is not None else None
+
+    # Wait for each thread to finish downloading
+    for t in threadList:
+        t.join()
 
     print('Downloaded {} files'.format(DOWNLOADED),
           '(Processed {}, Skipped {}, Exists {})'.format(TOTAL, SKIPPED, ERRORS))
